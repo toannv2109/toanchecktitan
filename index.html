@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>JSON Extractor → Table/CSV</title>
+
+  <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
+  <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
+
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    input[type="file"] { padding: 6px; }
+    button { padding: 8px 12px; cursor: pointer; }
+    #table { margin-top: 14px; }
+    .note { color:#555; font-size: 14px; margin-top: 10px; line-height: 1.4; }
+    .small { font-size: 13px; color:#666; }
+    .badge { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; margin-left:8px; }
+  </style>
+</head>
+<body>
+  <h2>Upload JSON → Lấy cột cần → Xuất bảng/CSV</h2>
+
+  <div class="row">
+    <input id="file" type="file" accept=".json,application/json" multiple />
+    <button id="downloadCsv" disabled>Tải CSV</button>
+    <span id="stat" class="badge">0 rows</span>
+  </div>
+
+  <div class="note">
+    <div><b>Cách dùng:</b> Chọn 1 hoặc nhiều file JSON. Tool sẽ gom dữ liệu và chỉ lấy đúng các cột đã cấu hình.</div>
+    <div class="small">Nếu dữ liệu lồng nhau, dùng key kiểu <code>customer.email</code> (dấu chấm) để lấy.</div>
+  </div>
+
+  <div id="table"></div>
+
+  <script>
+    // =========================
+    // 1) CHỈNH Ở ĐÂY (1 lần)
+    // =========================
+    // Danh sách cột bạn muốn lấy ra (field path) + tên hiển thị.
+    // Ví dụ JSON: { customer: { email: "a@b.com" } } => path = "customer.email"
+    const COLUMNS_WANTED = [
+      { title: "fullName", path: "fullName" },
+      { title: "email", path: "email" },
+      { title: "phone", path: "phone" },
+      { title: "username", path: "username" },
+      { title: "rankMember", path: "rankMember" },
+      { title: "createAt", path: "createAt" },
+      // thêm/bớt tùy bạn
+    ];
+
+    // Nếu bạn muốn tự động thêm tên file vào mỗi dòng:
+    const ADD_FILENAME_COLUMN = true;
+
+    // =========================
+    // 2) Logic (không cần chỉnh)
+    // =========================
+    const fileInput = document.getElementById("file");
+    const downloadBtn = document.getElementById("downloadCsv");
+    const statEl = document.getElementById("stat");
+    let table;
+
+    function isObject(v) {
+      return v && typeof v === "object" && !Array.isArray(v);
+    }
+
+    function toRows(json) {
+      // Array -> rows
+      if (Array.isArray(json)) return json;
+      // Object -> 1 row
+      if (isObject(json)) return [json];
+      throw new Error("JSON không phải object hoặc array.");
+    }
+
+    function getByPath(obj, path) {
+      if (!path) return undefined;
+      const parts = path.split(".");
+      let cur = obj;
+      for (const p of parts) {
+        if (cur == null) return undefined;
+        cur = cur[p];
+      }
+      return cur;
+    }
+
+    function normalizeValue(v) {
+      // Hiển thị cho đẹp: object/array -> JSON string ngắn
+      if (v == null) return "";
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return String(v);
+      }
+    }
+
+    function projectRow(row, fileName) {
+      const out = {};
+      if (ADD_FILENAME_COLUMN) out["_file"] = fileName;
+      for (const c of COLUMNS_WANTED) {
+        out[c.title] = normalizeValue(getByPath(row, c.path));
+      }
+      return out;
+    }
+
+    function buildColumns() {
+      const cols = [];
+      if (ADD_FILENAME_COLUMN) {
+        cols.push({ title: "file", field: "_file", headerFilter: "input" });
+      }
+      for (const c of COLUMNS_WANTED) {
+        cols.push({ title: c.title, field: c.title, headerFilter: "input" });
+      }
+      return cols;
+    }
+
+    async function readAllFiles(files) {
+      const all = [];
+      for (const f of files) {
+        const text = await f.text();
+        const json = JSON.parse(text);
+        const rows = toRows(json);
+        for (const r of rows) all.push(projectRow(r, f.name));
+      }
+      return all;
+    }
+
+    fileInput.addEventListener("change", async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+
+      downloadBtn.disabled = true;
+      statEl.textContent = "loading...";
+
+      try {
+        const data = await readAllFiles(files);
+        const columns = buildColumns();
+
+        if (table) table.destroy();
+
+        table = new Tabulator("#table", {
+          data,
+          columns,
+          layout: "fitDataStretch",
+          pagination: true,
+          paginationSize: 30,
+          movableColumns: true,
+          height: "70vh",
+        });
+
+        statEl.textContent = `${data.length} rows`;
+        downloadBtn.disabled = data.length === 0;
+      } catch (err) {
+        alert("Lỗi: " + (err?.message || err));
+        statEl.textContent = "0 rows";
+        downloadBtn.disabled = true;
+      }
+    });
+
+    downloadBtn.addEventListener("click", () => {
+      if (!table) return;
+      table.download("csv", "extracted.csv");
+    });
+  </script>
+</body>
+</html>
