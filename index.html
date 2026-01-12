@@ -3,9 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JSON Profiles Audit → Table/CSV</title>
+  <title>JSON Profiles Audit → Logos + Output</title>
 
-  <!-- Tabulator -->
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
 
@@ -32,7 +31,7 @@
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Bảng Profiles (bitrate/fps/size/logo/output)</h2>
+  <h2>Upload JSON → Audit Profile (bitrate/fps/size/logo/output)</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -42,11 +41,11 @@
   </div>
 
   <div class="note">
-    Tool sẽ tự đọc theo cấu trúc kiểu file của bạn:
+    Tool sẽ đọc theo cấu trúc giống file của bạn:
     <code>Device.Template.FormatConfigurations[0].TSMuxer.Profiles</code>,
     <code>Device.Template.Tracks.VideoTracks[0].Variants</code>,
+    <code>Device.Template.Tracks.VideoTracks[0].LogoInsertions</code>,
     <code>Outputs[0][profileIndex].Outputs</code>.
-    Nếu file không đúng format này, một số cột sẽ trống.
   </div>
 
   <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
@@ -76,8 +75,6 @@
     }
 
     function toJobs(json) {
-      // File của bạn top-level là array chứa job objects.
-      // Nhưng để robust: nếu là object -> bọc lại.
       if (Array.isArray(json)) return json;
       if (isObject(json)) return [json];
       return [];
@@ -86,21 +83,7 @@
     function formatMbps(bps) {
       if (bps == null || bps === "") return "";
       const mbps = Number(bps) / 1_000_000;
-      // Giữ 1 chữ số thập phân giống bảng bạn
-      return Math.round(mbps * 10) / 10;
-    }
-
-    function pickGroupLogo(variant) {
-      const logos = variant?.LogoInsertions || [];
-      const enabled = logos.filter(l => l && l.Enable && l.FileName);
-
-      if (!enabled.length) return "";
-
-      // Ưu tiên "logo nhóm" (khác Fplay_TT_EPL.png)
-      for (const l of enabled) {
-        if (l.FileName !== "Fplay_TT_EPL.png") return l.FileName;
-      }
-      return enabled[0].FileName;
+      return Math.round(mbps * 10) / 10; // 1 decimal
     }
 
     function joinOutputUrls(outputGroup) {
@@ -111,30 +94,106 @@
       return urls.join(" | ");
     }
 
+    // ---- LOGO EXTRACTION (FULL) ----
+    function normalizeLogo(l, source) {
+      if (!l || !l.FileName) return null;
+      return {
+        file: l.FileName,
+        enable: !!l.Enable,
+        left: l.Left ?? "",
+        top: l.Top ?? "",
+        size: l.Size ?? "",
+        unit: l.Unit ?? "",
+        opacity: l.Opacity ?? "",
+        source, // "variant" or "track"
+      };
+    }
+
+    function uniqueKey(logoObj) {
+      // Dedup theo file + vị trí + size + source
+      return [
+        logoObj.file,
+        logoObj.left, logoObj.top, logoObj.size,
+        logoObj.unit, logoObj.opacity,
+        logoObj.source
+      ].join("|");
+    }
+
+    function logoToText(logoObj) {
+      // Hiển thị gọn để audit
+      const pos = `L${logoObj.left} T${logoObj.top} S${logoObj.size}`;
+      const meta = [
+        pos,
+        logoObj.unit ? `U:${logoObj.unit}` : "",
+        logoObj.opacity !== "" ? `O:${logoObj.opacity}` : ""
+      ].filter(Boolean).join(" ");
+      return `${logoObj.file} (${meta}) [${logoObj.source}]`;
+    }
+
+    function collectLogos({ variantLogoInsertions, trackLogoInsertions }) {
+      const all = [];
+
+      (variantLogoInsertions || []).forEach(l => {
+        const n = normalizeLogo(l, "variant");
+        if (n) all.push(n);
+      });
+
+      (trackLogoInsertions || []).forEach(l => {
+        const n = normalizeLogo(l, "track");
+        if (n) all.push(n);
+      });
+
+      // Dedup
+      const seen = new Set();
+      const dedup = [];
+      for (const l of all) {
+        const k = uniqueKey(l);
+        if (!seen.has(k)) {
+          seen.add(k);
+          dedup.push(l);
+        }
+      }
+
+      const enabled = dedup.filter(x => x.enable);
+      const enabledVariant = enabled.filter(x => x.source === "variant");
+      const enabledTrack = enabled.filter(x => x.source === "track");
+
+      return {
+        all: dedup,
+        enabled,
+        enabledVariant,
+        enabledTrack
+      };
+    }
+
+    // ---- Build rows ----
     function buildRowsFromJob(job, fileName) {
       const rows = [];
 
       const template = job?.Device?.Template;
       const profiles = safeGet(template, ["FormatConfigurations", 0, "TSMuxer", "Profiles"]) || [];
       const variants = safeGet(template, ["Tracks", "VideoTracks", 0, "Variants"]) || [];
-      const outputGroups = safeGet(job, ["Outputs", 0]) || []; // list length = number of profiles
+      const trackLogos = safeGet(template, ["Tracks", "VideoTracks", 0, "LogoInsertions"]) || [];
+      const outputGroups = safeGet(job, ["Outputs", 0]) || [];
 
       const jobName = job?.Name ?? "";
       const tmplName = template?.Name ?? "";
 
       for (let i = 0; i < profiles.length; i++) {
-        // Profile i -> VariantIdx (thường i, nhưng mình đọc đúng field)
         const variantIdx =
           safeGet(profiles[i], ["TracksMapping", "VideoTrackList", 0, "VariantIdx"]) ?? i;
 
         const v = variants[variantIdx] || {};
+
         const bitrate = safeGet(v, ["Encoding", "Bitrate"]);
         const fps = safeGet(v, ["FrameRateParameters", "FrameRate"]);
         const w = safeGet(v, ["FrameSizeParameters", "Width"]);
         const h = safeGet(v, ["FrameSizeParameters", "Height"]);
         const baseRes = safeGet(v, ["FrameSizeParameters", "Resolution"]);
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
-        const groupLogo = pickGroupLogo(v);
+
+        const variantLogos = v?.LogoInsertions || [];
+        const logos = collectLogos({ variantLogoInsertions: variantLogos, trackLogoInsertions: trackLogos });
 
         const outGroup = outputGroups[i] || {};
         const outUrls = joinOutputUrls(outGroup);
@@ -143,13 +202,21 @@
           file: fileName,
           job_name: jobName,
           template_name: tmplName,
+
           profile: i,
+          variant_idx: variantIdx,
+
           bitrate_mbps: formatMbps(bitrate),
           fps: fps !== undefined ? Number(fps) : "",
           size_px: (w && h) ? `${w}x${h}` : "",
           baseRes: baseRes ?? "",
           gop: gop ?? "",
-          logo_group: groupLogo,
+
+          enabled_logo_count: logos.enabled.length,
+          enabled_logos_all: logos.enabled.map(logoToText).join(" | "),
+          enabled_logos_variant: logos.enabledVariant.map(logoToText).join(" | "),
+          enabled_logos_track: logos.enabledTrack.map(logoToText).join(" | "),
+
           output_urls: outUrls,
         });
       }
@@ -164,12 +231,18 @@
         { title: "template_name", field: "template_name", headerFilter: "input" },
 
         { title: "Profile", field: "profile", headerFilter: "input" },
+        { title: "VariantIdx", field: "variant_idx", headerFilter: "input" },
         { title: "Bitrate (Mbps)", field: "bitrate_mbps", headerFilter: "input" },
         { title: "FPS", field: "fps", headerFilter: "input" },
         { title: "Size (px)", field: "size_px", headerFilter: "input" },
         { title: "BaseRes", field: "baseRes", headerFilter: "input" },
         { title: "GOP", field: "gop", headerFilter: "input" },
-        { title: "Logo “nhóm”", field: "logo_group", headerFilter: "input" },
+
+        { title: "Enabled Logo Count", field: "enabled_logo_count", headerFilter: "input" },
+        { title: "Enabled Logos (ALL)", field: "enabled_logos_all", headerFilter: "input" },
+        { title: "Enabled Logos (Variant)", field: "enabled_logos_variant", headerFilter: "input" },
+        { title: "Enabled Logos (Track)", field: "enabled_logos_track", headerFilter: "input" },
+
         { title: "Output URL(s)", field: "output_urls", headerFilter: "input" },
       ];
     }
@@ -192,7 +265,7 @@
           for (const job of jobs) {
             const rows = buildRowsFromJob(job, f.name);
             if (!rows.length) {
-              dbg.push(`- ${f.name}: Không thấy Profiles hoặc Variants theo cấu trúc mong đợi.`);
+              dbg.push(`- ${f.name}: Không thấy Profiles/Variants theo cấu trúc mong đợi.`);
             }
             allRows.push(...rows);
           }
@@ -204,7 +277,7 @@
       debugEl.textContent =
         dbg.length
           ? "Debug:\n" + dbg.join("\n")
-          : "Debug: OK (không phát hiện lỗi cấu trúc khi đọc file).";
+          : "Debug: OK (đọc file và map profile/variant/logo/output thành công).";
 
       return allRows;
     }
@@ -248,7 +321,7 @@
 
     downloadBtn.addEventListener("click", () => {
       if (!table) return;
-      table.download("csv", "profiles_audit.csv");
+      table.download("csv", "profiles_audit_with_logos.csv");
     });
 
     clearBtn.addEventListener("click", () => {
