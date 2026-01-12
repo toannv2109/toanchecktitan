@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JSON Profiles Audit → Logos Position + Output</title>
+  <title>JSON Profiles Audit → BaseRes + Logos + Output</title>
 
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
@@ -31,7 +31,7 @@
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Audit Profile (bitrate/fps/size/logo position/output)</h2>
+  <h2>Upload JSON → Audit Profile (BaseRes/Logo position/Output)</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -41,13 +41,9 @@
   </div>
 
   <div class="note">
-    Tool đọc theo cấu trúc giống file của bạn:
-    <code>Device.Template.FormatConfigurations[0].TSMuxer.Profiles</code>,
-    <code>Device.Template.Tracks.VideoTracks[0].Variants</code>,
-    <code>Device.Template.Tracks.VideoTracks[0].LogoInsertions</code>,
-    <code>Outputs[0][profileIndex].Outputs</code>.
-    <br/>
-    Logo hiển thị dạng: <code>file.png (Left,Top,Size)</code>
+    - Nếu <b>BaseRes = Custom</b> thì <b>BaseRes</b> sẽ tự lấy giá trị từ Size(px) (Width x Height).<br/>
+    - Cột <b>Size (px)</b> đã bị ẩn theo yêu cầu.<br/>
+    - Logo hiển thị dạng: <code>file.png (Top,Left,Size)</code>
   </div>
 
   <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
@@ -96,7 +92,7 @@
       return urls.join(" | ");
     }
 
-    // ===== LOGO: file tới .png + format file.png (Left,Top,Size) =====
+    // ===== LOGO: file tới .png + format file.png (Top,Left,Size) =====
     function extractPngName(fileName) {
       if (!fileName || typeof fileName !== "string") return "";
       const base = fileName.split(/[\\/]/).pop();
@@ -117,8 +113,7 @@
     }
 
     function logoPosText(x) {
-      // EXACT format bạn yêu cầu:
-      // Fplay_TT_EPL.png (836,810,122)
+      // Bạn yêu cầu: Fplay_TT_EPL.png (810,836,122) = (Top,Left,Size)
       return `${x.file} (${x.top},${x.left},${x.size})`;
     }
 
@@ -140,7 +135,7 @@
         const seen = new Set();
         const out = [];
         for (const x of arr) {
-          const k = `${x.file}|${x.left}|${x.top}|${x.size}`;
+          const k = `${x.file}|${x.top}|${x.left}|${x.size}`;
           if (!seen.has(k)) {
             seen.add(k);
             out.push(logoPosText(x));
@@ -180,6 +175,14 @@
         const baseRes = safeGet(v, ["FrameSizeParameters", "Resolution"]);
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
 
+        // Size(px) dùng để thay thế BaseRes khi BaseRes = Custom (nhưng không hiển thị cột Size)
+        const sizePx = (w && h) ? `${w}x${h}` : "";
+
+        let baseResVal = baseRes ?? "";
+        if (String(baseResVal).toLowerCase() === "custom") {
+          baseResVal = sizePx; // yêu cầu: custom thì lấy sizePx
+        }
+
         const variantLogos = v?.LogoInsertions || [];
         const logos = collectEnabledLogoPosText({
           variantLogoInsertions: variantLogos,
@@ -198,8 +201,7 @@
 
           bitrate_mbps: formatMbps(bitrate),
           fps: fps !== undefined ? Number(fps) : "",
-          size_px: (w && h) ? `${w}x${h}` : "",
-          baseRes: baseRes ?? "",
+          baseRes: baseResVal,
           gop: gop ?? "",
 
           enabled_logos_variant: logos.variantTexts.join(" | "),
@@ -221,7 +223,8 @@
         { title: "VariantIdx", field: "variant_idx", headerFilter: "input" },
         { title: "Bitrate (Mbps)", field: "bitrate_mbps", headerFilter: "input" },
         { title: "FPS", field: "fps", headerFilter: "input" },
-        { title: "Size (px)", field: "size_px", headerFilter: "input" },
+
+        // Size (px) KHÔNG hiển thị nữa
         { title: "BaseRes", field: "baseRes", headerFilter: "input" },
         { title: "GOP", field: "gop", headerFilter: "input" },
 
@@ -303,7 +306,7 @@
 
     downloadBtn.addEventListener("click", () => {
       if (!table) return;
-      table.download("csv", "profiles_audit_logos_position.csv");
+      table.download("csv", "profiles_audit.csv");
     });
 
     clearBtn.addEventListener("click", () => {
