@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JSON Profiles Audit → BaseRes + Codec + FrameType + Quality + Logos + Output</title>
+  <title>JSON Profiles Audit → BaseRes + Codec/Bitrate/FPS/GOP + More</title>
 
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
@@ -31,7 +31,7 @@
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Audit Profile (BaseRes/Codec/FrameType/Quality/Logo position/Output)</h2>
+  <h2>Upload JSON → Audit Profile</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -42,10 +42,8 @@
 
   <div class="note">
     - Nếu <b>BaseRes = Custom</b> thì <b>BaseRes</b> sẽ tự lấy giá trị từ Size(px) (Width x Height).<br/>
-    - Cột <b>Size (px)</b> đã bị ẩn theo yêu cầu.<br/>
-    - Thêm cột <b>Codec</b> = <code>Encoding.Codec</code>, <b>Frame type</b> = <code>Encoding.FrameType</code>.<br/>
-    - Thêm cột <b>Quality/CPUtunning</b> lấy từ <code>VideoQuality.PremiumVideoQuality</code>.<br/>
-    - Logo hiển thị dạng: <code>file.png (Top,Left,Size)</code>
+    - Logo hiển thị dạng: <code>file.png (Top,Left,Size)</code><br/>
+    - Thứ tự cột theo yêu cầu: <b>BaseRes → Codec → Bitrate → FPS → GOP</b>
   </div>
 
   <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
@@ -83,7 +81,7 @@
     function formatMbps(bps) {
       if (bps == null || bps === "") return "";
       const mbps = Number(bps) / 1_000_000;
-      return Math.round(mbps * 10) / 10; // 1 decimal
+      return Math.round(mbps * 10) / 10;
     }
 
     function joinOutputUrls(outputGroup) {
@@ -94,7 +92,7 @@
       return urls.join(" | ");
     }
 
-    // ===== LOGO: file tới .png + format file.png (Top,Left,Size) =====
+    // ===== LOGO =====
     function extractPngName(fileName) {
       if (!fileName || typeof fileName !== "string") return "";
       const base = fileName.split(/[\\/]/).pop();
@@ -110,12 +108,12 @@
         left: l.Left ?? "",
         top: l.Top ?? "",
         size: l.Size ?? "",
-        source, // "variant" | "track"
+        source,
       };
     }
 
     function logoPosText(x) {
-      // (Top,Left,Size)
+      // Format: file.png (Top,Left,Size)
       return `${x.file} (${x.top},${x.left},${x.size})`;
     }
 
@@ -152,7 +150,7 @@
       };
     }
 
-    // ===== Build rows =====
+    // ===== Rows =====
     function buildRowsFromJob(job, fileName) {
       const rows = [];
 
@@ -176,18 +174,12 @@
         const h = safeGet(v, ["FrameSizeParameters", "Height"]);
         const baseRes = safeGet(v, ["FrameSizeParameters", "Resolution"]);
 
-        // NEW: Codec + Frame type (theo đoạn bạn đưa)
         const codec = safeGet(v, ["Encoding", "Codec"]) ?? "";
         const frameType = safeGet(v, ["Encoding", "FrameType"]) ?? "";
-
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
-
-        // Quality/CPUtunning
         const qualityCpu = safeGet(v, ["VideoQuality", "PremiumVideoQuality"]) ?? "";
 
-        // Size(px) dùng để thay thế BaseRes khi BaseRes = Custom (nhưng không hiển thị cột Size)
         const sizePx = (w && h) ? `${w}x${h}` : "";
-
         let baseResVal = baseRes ?? "";
         if (String(baseResVal).toLowerCase() === "custom") {
           baseResVal = sizePx;
@@ -209,15 +201,16 @@
           profile: i,
           variant_idx: variantIdx,
 
+          // data fields
+          baseRes: baseResVal,
+
+          codec: codec,
           bitrate_mbps: formatMbps(bitrate),
           fps: fps !== undefined ? Number(fps) : "",
+          gop: gop ?? "",
 
-          baseRes: baseResVal,
-          codec: codec,
           frame_type: frameType,
           quality_cpu: qualityCpu,
-
-          gop: gop ?? "",
 
           enabled_logos_variant: logos.variantTexts.join(" | "),
           enabled_logos_track: logos.trackTexts.join(" | "),
@@ -229,6 +222,7 @@
       return rows;
     }
 
+    // ===== Columns (ORDER FIXED as requested) =====
     function buildColumns() {
       return [
         { title: "file", field: "file", headerFilter: "input" },
@@ -236,15 +230,17 @@
 
         { title: "Profile", field: "profile", headerFilter: "input" },
         { title: "VariantIdx", field: "variant_idx", headerFilter: "input" },
-        { title: "Bitrate (Mbps)", field: "bitrate_mbps", headerFilter: "input" },
-        { title: "FPS", field: "fps", headerFilter: "input" },
 
+        // BaseRes → Codec → Bitrate → FPS → GOP
         { title: "BaseRes", field: "baseRes", headerFilter: "input" },
         { title: "Codec", field: "codec", headerFilter: "input" },
+        { title: "Bitrate (Mbps)", field: "bitrate_mbps", headerFilter: "input" },
+        { title: "FPS", field: "fps", headerFilter: "input" },
+        { title: "GOP", field: "gop", headerFilter: "input" },
+
+        // then other columns
         { title: "Frame type", field: "frame_type", headerFilter: "input" },
         { title: "Quality/CPUtunning", field: "quality_cpu", headerFilter: "input" },
-
-        { title: "GOP", field: "gop", headerFilter: "input" },
 
         { title: "Enabled Logos (Variant)", field: "enabled_logos_variant", headerFilter: "input" },
         { title: "Enabled Logos (Track)", field: "enabled_logos_track", headerFilter: "input" },
