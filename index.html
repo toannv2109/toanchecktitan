@@ -41,7 +41,7 @@
   </div>
 
   <div class="note">
-    Tool sẽ đọc theo cấu trúc giống file của bạn:
+    Tool đọc theo cấu trúc giống file của bạn:
     <code>Device.Template.FormatConfigurations[0].TSMuxer.Profiles</code>,
     <code>Device.Template.Tracks.VideoTracks[0].Variants</code>,
     <code>Device.Template.Tracks.VideoTracks[0].LogoInsertions</code>,
@@ -94,63 +94,47 @@
       return urls.join(" | ");
     }
 
-    // ---- LOGO EXTRACTION (FULL) ----
+    // ===== LOGO: chỉ lấy tên file tới .png =====
+    function extractPngName(fileName) {
+      if (!fileName || typeof fileName !== "string") return "";
+      // Nếu có path kiểu folder/file.png thì lấy basename
+      const base = fileName.split(/[\\/]/).pop();
+
+      // Lấy đúng đoạn kết thúc bằng .png (không phân biệt hoa thường)
+      const m = base.match(/.+?\.png/i);
+      return m ? m[0] : base; // fallback
+    }
+
     function normalizeLogo(l, source) {
       if (!l || !l.FileName) return null;
       return {
-        file: l.FileName,
+        file: extractPngName(l.FileName),
         enable: !!l.Enable,
-        left: l.Left ?? "",
-        top: l.Top ?? "",
-        size: l.Size ?? "",
-        unit: l.Unit ?? "",
-        opacity: l.Opacity ?? "",
-        source, // "variant" or "track"
+        source, // "variant" | "track"
       };
     }
 
-    function uniqueKey(logoObj) {
-      // Dedup theo file + vị trí + size + source
-      return [
-        logoObj.file,
-        logoObj.left, logoObj.top, logoObj.size,
-        logoObj.unit, logoObj.opacity,
-        logoObj.source
-      ].join("|");
-    }
-
-    function logoToText(logoObj) {
-      // Hiển thị gọn để audit
-      const pos = `L${logoObj.left} T${logoObj.top} S${logoObj.size}`;
-      const meta = [
-        pos,
-        logoObj.unit ? `U:${logoObj.unit}` : "",
-        logoObj.opacity !== "" ? `O:${logoObj.opacity}` : ""
-      ].filter(Boolean).join(" ");
-      return `${logoObj.file} (${meta}) [${logoObj.source}]`;
-    }
-
-    function collectLogos({ variantLogoInsertions, trackLogoInsertions }) {
+    function collectLogoNames({ variantLogoInsertions, trackLogoInsertions }) {
       const all = [];
 
       (variantLogoInsertions || []).forEach(l => {
         const n = normalizeLogo(l, "variant");
-        if (n) all.push(n);
+        if (n && n.file) all.push(n);
       });
 
       (trackLogoInsertions || []).forEach(l => {
         const n = normalizeLogo(l, "track");
-        if (n) all.push(n);
+        if (n && n.file) all.push(n);
       });
 
-      // Dedup
+      // Dedup theo file + source (để thấy nếu cùng tên xuất hiện ở 2 nguồn)
       const seen = new Set();
       const dedup = [];
-      for (const l of all) {
-        const k = uniqueKey(l);
+      for (const x of all) {
+        const k = `${x.file}|${x.source}|${x.enable}`;
         if (!seen.has(k)) {
           seen.add(k);
-          dedup.push(l);
+          dedup.push(x);
         }
       }
 
@@ -158,15 +142,25 @@
       const enabledVariant = enabled.filter(x => x.source === "variant");
       const enabledTrack = enabled.filter(x => x.source === "track");
 
+      // Chỉ trả về danh sách tên file .png, đã dedup theo tên (trong từng nhóm)
+      function uniqNames(arr) {
+        const s = new Set();
+        const out = [];
+        for (const x of arr) {
+          if (!s.has(x.file)) { s.add(x.file); out.push(x.file); }
+        }
+        return out;
+      }
+
       return {
-        all: dedup,
-        enabled,
-        enabledVariant,
-        enabledTrack
+        enabledAllNames: uniqNames(enabled),
+        enabledVariantNames: uniqNames(enabledVariant),
+        enabledTrackNames: uniqNames(enabledTrack),
+        enabledCount: uniqNames(enabled).length,
       };
     }
 
-    // ---- Build rows ----
+    // ===== Build rows =====
     function buildRowsFromJob(job, fileName) {
       const rows = [];
 
@@ -177,7 +171,6 @@
       const outputGroups = safeGet(job, ["Outputs", 0]) || [];
 
       const jobName = job?.Name ?? "";
-      const tmplName = template?.Name ?? "";
 
       for (let i = 0; i < profiles.length; i++) {
         const variantIdx =
@@ -193,7 +186,10 @@
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
 
         const variantLogos = v?.LogoInsertions || [];
-        const logos = collectLogos({ variantLogoInsertions: variantLogos, trackLogoInsertions: trackLogos });
+        const logos = collectLogoNames({
+          variantLogoInsertions: variantLogos,
+          trackLogoInsertions: trackLogos
+        });
 
         const outGroup = outputGroups[i] || {};
         const outUrls = joinOutputUrls(outGroup);
@@ -201,7 +197,6 @@
         rows.push({
           file: fileName,
           job_name: jobName,
-          template_name: tmplName,
 
           profile: i,
           variant_idx: variantIdx,
@@ -212,10 +207,10 @@
           baseRes: baseRes ?? "",
           gop: gop ?? "",
 
-          enabled_logo_count: logos.enabled.length,
-          enabled_logos_all: logos.enabled.map(logoToText).join(" | "),
-          enabled_logos_variant: logos.enabledVariant.map(logoToText).join(" | "),
-          enabled_logos_track: logos.enabledTrack.map(logoToText).join(" | "),
+          enabled_logo_count: logos.enabledCount,
+          enabled_logos_all: logos.enabledAllNames.join(" | "),
+          enabled_logos_variant: logos.enabledVariantNames.join(" | "),
+          enabled_logos_track: logos.enabledTrackNames.join(" | "),
 
           output_urls: outUrls,
         });
@@ -228,7 +223,6 @@
       return [
         { title: "file", field: "file", headerFilter: "input" },
         { title: "job_name", field: "job_name", headerFilter: "input" },
-        { title: "template_name", field: "template_name", headerFilter: "input" },
 
         { title: "Profile", field: "profile", headerFilter: "input" },
         { title: "VariantIdx", field: "variant_idx", headerFilter: "input" },
@@ -264,9 +258,7 @@
 
           for (const job of jobs) {
             const rows = buildRowsFromJob(job, f.name);
-            if (!rows.length) {
-              dbg.push(`- ${f.name}: Không thấy Profiles/Variants theo cấu trúc mong đợi.`);
-            }
+            if (!rows.length) dbg.push(`- ${f.name}: Không thấy Profiles/Variants theo cấu trúc mong đợi.`);
             allRows.push(...rows);
           }
         } catch (e) {
@@ -275,9 +267,8 @@
       }
 
       debugEl.textContent =
-        dbg.length
-          ? "Debug:\n" + dbg.join("\n")
-          : "Debug: OK (đọc file và map profile/variant/logo/output thành công).";
+        dbg.length ? "Debug:\n" + dbg.join("\n")
+                   : "Debug: OK (đọc file và map profile/variant/logo/output thành công).";
 
       return allRows;
     }
