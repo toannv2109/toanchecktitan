@@ -47,7 +47,7 @@
     <code>Device.Template.Tracks.VideoTracks[0].LogoInsertions</code>,
     <code>Outputs[0][profileIndex].Outputs</code>.
     <br/>
-    Logo hiển thị dạng: <code>file.png@LxxxTyyySzzz(Unit)</code>
+    Logo hiển thị dạng: <code>file.png (Left,Top,Size)</code>
   </div>
 
   <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
@@ -96,11 +96,11 @@
       return urls.join(" | ");
     }
 
-    // ===== LOGO: file tới .png + vị trí =====
+    // ===== LOGO: file tới .png + format file.png (Left,Top,Size) =====
     function extractPngName(fileName) {
       if (!fileName || typeof fileName !== "string") return "";
       const base = fileName.split(/[\\/]/).pop();
-      const m = base.match(/.+?\.png/i);
+      const m = base.match(/[^\\/]+?\.png/i);
       return m ? m[0] : base;
     }
 
@@ -112,43 +112,35 @@
         left: l.Left ?? "",
         top: l.Top ?? "",
         size: l.Size ?? "",
-        unit: l.Unit ?? "",
         source, // "variant" | "track"
       };
     }
 
     function logoPosText(x) {
-      // file.png@L836T810S122(Permillage)
-      const unit = x.unit ? `(${x.unit})` : "";
-      return `${x.file}@L${x.left}T${x.top}S${x.size}${unit}`;
+      // EXACT format bạn yêu cầu:
+      // Fplay_TT_EPL.png (836,810,122)
+      return `${x.file} (${x.left},${x.top},${x.size})`;
     }
 
     function collectEnabledLogoPosText({ variantLogoInsertions, trackLogoInsertions }) {
-      const all = [];
+      const enabledVariant = [];
+      const enabledTrack = [];
 
       (variantLogoInsertions || []).forEach(l => {
         const n = normalizeLogo(l, "variant");
-        if (n && n.file) all.push(n);
+        if (n && n.enable && n.file) enabledVariant.push(n);
       });
 
       (trackLogoInsertions || []).forEach(l => {
         const n = normalizeLogo(l, "track");
-        if (n && n.file) all.push(n);
+        if (n && n.enable && n.file) enabledTrack.push(n);
       });
 
-      // Lọc enabled
-      const enabled = all.filter(x => x.enable);
-
-      // Tách theo nguồn
-      const enabledVariant = enabled.filter(x => x.source === "variant");
-      const enabledTrack = enabled.filter(x => x.source === "track");
-
-      // Dedup trong từng nhóm theo (file + left + top + size + unit)
       function uniqPos(arr) {
         const seen = new Set();
         const out = [];
         for (const x of arr) {
-          const k = `${x.file}|${x.left}|${x.top}|${x.size}|${x.unit}`;
+          const k = `${x.file}|${x.left}|${x.top}|${x.size}`;
           if (!seen.has(k)) {
             seen.add(k);
             out.push(logoPosText(x));
