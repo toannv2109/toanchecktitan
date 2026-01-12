@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JSON Profiles Audit → Logos + Output</title>
+  <title>JSON Profiles Audit → Logos Position + Output</title>
 
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
@@ -31,7 +31,7 @@
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Audit Profile (bitrate/fps/size/logo/output)</h2>
+  <h2>Upload JSON → Audit Profile (bitrate/fps/size/logo position/output)</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -46,6 +46,8 @@
     <code>Device.Template.Tracks.VideoTracks[0].Variants</code>,
     <code>Device.Template.Tracks.VideoTracks[0].LogoInsertions</code>,
     <code>Outputs[0][profileIndex].Outputs</code>.
+    <br/>
+    Logo hiển thị dạng: <code>file.png@LxxxTyyySzzz(Unit)</code>
   </div>
 
   <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
@@ -94,15 +96,12 @@
       return urls.join(" | ");
     }
 
-    // ===== LOGO: chỉ lấy tên file tới .png =====
+    // ===== LOGO: file tới .png + vị trí =====
     function extractPngName(fileName) {
       if (!fileName || typeof fileName !== "string") return "";
-      // Nếu có path kiểu folder/file.png thì lấy basename
       const base = fileName.split(/[\\/]/).pop();
-
-      // Lấy đúng đoạn kết thúc bằng .png (không phân biệt hoa thường)
       const m = base.match(/.+?\.png/i);
-      return m ? m[0] : base; // fallback
+      return m ? m[0] : base;
     }
 
     function normalizeLogo(l, source) {
@@ -110,11 +109,21 @@
       return {
         file: extractPngName(l.FileName),
         enable: !!l.Enable,
+        left: l.Left ?? "",
+        top: l.Top ?? "",
+        size: l.Size ?? "",
+        unit: l.Unit ?? "",
         source, // "variant" | "track"
       };
     }
 
-    function collectLogoNames({ variantLogoInsertions, trackLogoInsertions }) {
+    function logoPosText(x) {
+      // file.png@L836T810S122(Permillage)
+      const unit = x.unit ? `(${x.unit})` : "";
+      return `${x.file}@L${x.left}T${x.top}S${x.size}${unit}`;
+    }
+
+    function collectEnabledLogoPosText({ variantLogoInsertions, trackLogoInsertions }) {
       const all = [];
 
       (variantLogoInsertions || []).forEach(l => {
@@ -127,36 +136,30 @@
         if (n && n.file) all.push(n);
       });
 
-      // Dedup theo file + source (để thấy nếu cùng tên xuất hiện ở 2 nguồn)
-      const seen = new Set();
-      const dedup = [];
-      for (const x of all) {
-        const k = `${x.file}|${x.source}|${x.enable}`;
-        if (!seen.has(k)) {
-          seen.add(k);
-          dedup.push(x);
-        }
-      }
+      // Lọc enabled
+      const enabled = all.filter(x => x.enable);
 
-      const enabled = dedup.filter(x => x.enable);
+      // Tách theo nguồn
       const enabledVariant = enabled.filter(x => x.source === "variant");
       const enabledTrack = enabled.filter(x => x.source === "track");
 
-      // Chỉ trả về danh sách tên file .png, đã dedup theo tên (trong từng nhóm)
-      function uniqNames(arr) {
-        const s = new Set();
+      // Dedup trong từng nhóm theo (file + left + top + size + unit)
+      function uniqPos(arr) {
+        const seen = new Set();
         const out = [];
         for (const x of arr) {
-          if (!s.has(x.file)) { s.add(x.file); out.push(x.file); }
+          const k = `${x.file}|${x.left}|${x.top}|${x.size}|${x.unit}`;
+          if (!seen.has(k)) {
+            seen.add(k);
+            out.push(logoPosText(x));
+          }
         }
         return out;
       }
 
       return {
-        enabledAllNames: uniqNames(enabled),
-        enabledVariantNames: uniqNames(enabledVariant),
-        enabledTrackNames: uniqNames(enabledTrack),
-        enabledCount: uniqNames(enabled).length,
+        variantTexts: uniqPos(enabledVariant),
+        trackTexts: uniqPos(enabledTrack),
       };
     }
 
@@ -186,7 +189,7 @@
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
 
         const variantLogos = v?.LogoInsertions || [];
-        const logos = collectLogoNames({
+        const logos = collectEnabledLogoPosText({
           variantLogoInsertions: variantLogos,
           trackLogoInsertions: trackLogos
         });
@@ -207,10 +210,8 @@
           baseRes: baseRes ?? "",
           gop: gop ?? "",
 
-          enabled_logo_count: logos.enabledCount,
-          enabled_logos_all: logos.enabledAllNames.join(" | "),
-          enabled_logos_variant: logos.enabledVariantNames.join(" | "),
-          enabled_logos_track: logos.enabledTrackNames.join(" | "),
+          enabled_logos_variant: logos.variantTexts.join(" | "),
+          enabled_logos_track: logos.trackTexts.join(" | "),
 
           output_urls: outUrls,
         });
@@ -232,8 +233,6 @@
         { title: "BaseRes", field: "baseRes", headerFilter: "input" },
         { title: "GOP", field: "gop", headerFilter: "input" },
 
-        { title: "Enabled Logo Count", field: "enabled_logo_count", headerFilter: "input" },
-        { title: "Enabled Logos (ALL)", field: "enabled_logos_all", headerFilter: "input" },
         { title: "Enabled Logos (Variant)", field: "enabled_logos_variant", headerFilter: "input" },
         { title: "Enabled Logos (Track)", field: "enabled_logos_track", headerFilter: "input" },
 
@@ -312,7 +311,7 @@
 
     downloadBtn.addEventListener("click", () => {
       if (!table) return;
-      table.download("csv", "profiles_audit_with_logos.csv");
+      table.download("csv", "profiles_audit_logos_position.csv");
     });
 
     clearBtn.addEventListener("click", () => {
