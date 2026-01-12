@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JSON Profiles Audit → BaseRes + Logos + Output</title>
+  <title>JSON Profiles Audit → BaseRes + Quality + Logos + Output</title>
 
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
@@ -31,7 +31,7 @@
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Audit Profile (BaseRes/Logo position/Output)</h2>
+  <h2>Upload JSON → Audit Profile (BaseRes/Quality/Logo position/Output)</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -43,6 +43,7 @@
   <div class="note">
     - Nếu <b>BaseRes = Custom</b> thì <b>BaseRes</b> sẽ tự lấy giá trị từ Size(px) (Width x Height).<br/>
     - Cột <b>Size (px)</b> đã bị ẩn theo yêu cầu.<br/>
+    - Thêm cột <b>Quality/CPUtunning</b> lấy từ <code>VideoQuality.PremiumVideoQuality</code> (trong từng variant).<br/>
     - Logo hiển thị dạng: <code>file.png (Top,Left,Size)</code>
   </div>
 
@@ -113,7 +114,7 @@
     }
 
     function logoPosText(x) {
-      // Bạn yêu cầu: Fplay_TT_EPL.png (810,836,122) = (Top,Left,Size)
+      // Bạn yêu cầu: (Top,Left,Size)
       return `${x.file} (${x.top},${x.left},${x.size})`;
     }
 
@@ -175,6 +176,9 @@
         const baseRes = safeGet(v, ["FrameSizeParameters", "Resolution"]);
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
 
+        // NEW: Quality/CPUtunning
+        const qualityCpu = safeGet(v, ["VideoQuality", "PremiumVideoQuality"]) ?? "";
+
         // Size(px) dùng để thay thế BaseRes khi BaseRes = Custom (nhưng không hiển thị cột Size)
         const sizePx = (w && h) ? `${w}x${h}` : "";
 
@@ -201,7 +205,9 @@
 
           bitrate_mbps: formatMbps(bitrate),
           fps: fps !== undefined ? Number(fps) : "",
+
           baseRes: baseResVal,
+          quality_cpu: qualityCpu, // NEW column here
           gop: gop ?? "",
 
           enabled_logos_variant: logos.variantTexts.join(" | "),
@@ -224,8 +230,8 @@
         { title: "Bitrate (Mbps)", field: "bitrate_mbps", headerFilter: "input" },
         { title: "FPS", field: "fps", headerFilter: "input" },
 
-        // Size (px) KHÔNG hiển thị nữa
         { title: "BaseRes", field: "baseRes", headerFilter: "input" },
+        { title: "Quality/CPUtunning", field: "quality_cpu", headerFilter: "input" },  <!-- NEW -->
         { title: "GOP", field: "gop", headerFilter: "input" },
 
         { title: "Enabled Logos (Variant)", field: "enabled_logos_variant", headerFilter: "input" },
