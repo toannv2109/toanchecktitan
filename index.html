@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Upload JSON → Lấy cột cần → Xuất bảng/CSV</title>
+  <title>JSON Profiles Audit → Table/CSV</title>
 
-  <!-- Tabulator (table + filter + pagination + download CSV) -->
+  <!-- Tabulator -->
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
 
@@ -17,24 +17,22 @@
     button { padding: 8px 12px; cursor: pointer; }
     .badge { display:inline-block; padding:2px 10px; border:1px solid #ddd; border-radius:999px; }
     .note { color:#555; font-size: 14px; margin-top: 10px; line-height: 1.45; }
-    .grid { display:grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+    #table { margin-top: 14px; }
     pre {
       white-space: pre-wrap;
       background: #f6f6f6;
       padding: 10px;
       border: 1px solid #ddd;
       border-radius: 10px;
-      margin: 0;
+      margin: 10px 0 0 0;
       font-size: 13px;
       color: #333;
     }
-    #table { margin-top: 14px; }
-    .muted { color:#666; font-size: 13px; }
     code { background:#f2f2f2; padding: 2px 6px; border-radius: 6px; }
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Lấy cột cần → Xuất bảng/CSV</h2>
+  <h2>Upload JSON → Bảng Profiles (bitrate/fps/size/logo/output)</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -44,57 +42,23 @@
   </div>
 
   <div class="note">
-    <div><b>Cách dùng:</b> Chọn 1 hoặc nhiều file JSON. Tool sẽ gom dữ liệu và chỉ lấy đúng các cột đã cấu hình.</div>
-    <div class="muted">
-      Path lấy dữ liệu dùng dấu chấm, ví dụ:
-      <code>Device.Template.GlobalConfiguration.APIBlackout.LocalFilename</code>
-      hoặc có mảng:
-      <code>Device.Template.Tracks.AudioTracks[0].Language</code>
-    </div>
+    Tool sẽ tự đọc theo cấu trúc kiểu file của bạn:
+    <code>Device.Template.FormatConfigurations[0].TSMuxer.Profiles</code>,
+    <code>Device.Template.Tracks.VideoTracks[0].Variants</code>,
+    <code>Outputs[0][profileIndex].Outputs</code>.
+    Nếu file không đúng format này, một số cột sẽ trống.
   </div>
 
-  <div class="grid">
-    <pre id="keys">Keys phát hiện sẽ hiện ở đây sau khi bạn upload (để bạn biết key thật trong JSON và map path cho đúng).</pre>
-  </div>
+  <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
 
   <div id="table"></div>
 
   <script>
-    // =========================
-    // 1) CẤU HÌNH CỘT (CHỈ SỬA Ở ĐÂY)
-    // =========================
-    // title: tên cột hiển thị
-    // path: đường dẫn key trong JSON (dạng dấu chấm; hỗ trợ [0] cho mảng)
-    const COLUMNS_WANTED = [
-      // Bạn yêu cầu: lấy "Chuongtrinh_Start.png" từ APIBlackout.LocalFilename
-      { title: "start all", path: "Device.Template.GlobalConfiguration.APIBlackout.LocalFilename" },
-
-      // Một vài cột gợi ý hay dùng (bạn có thể xóa/đổi/thêm)
-      { title: "template name", path: "Device.Template.Name" },
-      { title: "format type", path: "Device.Template.FormatConfigurations.Type" },
-
-      // Ví dụ audio tracks (nếu có)
-      { title: "audio_1_lang", path: "Device.Template.Tracks.AudioTracks[0].Language" },
-      { title: "audio_2_lang", path: "Device.Template.Tracks.AudioTracks[1].Language" },
-
-      // Ví dụ video pid / encoder (tùy file bạn)
-      { title: "video_pid", path: "Device.Template.Tracks.VideoTracks[0].Pid" },
-    ];
-
-    // Thêm cột file name để biết dòng này đến từ file nào
-    const ADD_FILENAME_COLUMN = true;
-
-    // Pagination size
-    const PAGE_SIZE = 30;
-
-    // =========================
-    // 2) LOGIC (KHÔNG CẦN SỬA)
-    // =========================
     const fileInput = document.getElementById("file");
     const downloadBtn = document.getElementById("downloadCsv");
     const clearBtn = document.getElementById("clear");
     const statEl = document.getElementById("stat");
-    const keysBox = document.getElementById("keys");
+    const debugEl = document.getElementById("debug");
 
     let table;
 
@@ -102,117 +66,153 @@
       return v && typeof v === "object" && !Array.isArray(v);
     }
 
-    // Unwrap JSON về dạng rows (mảng object)
-    function toRows(json) {
-      // 1) Nếu là mảng -> ok
-      if (Array.isArray(json)) return json;
-
-      // 2) Nếu là object -> thử "unwrap" mảng phổ biến
-      if (isObject(json)) {
-        const candidates = ["data", "items", "results", "rows", "list"];
-        for (const k of candidates) {
-          if (Array.isArray(json[k])) return json[k];
-        }
-
-        // 3) Nếu object chỉ có 1 key và value là array -> unwrap luôn
-        const keys = Object.keys(json);
-        if (keys.length === 1 && Array.isArray(json[keys[0]])) return json[keys[0]];
-
-        // 4) Không unwrap được -> coi như 1 row
-        return [json];
-      }
-
-      throw new Error("JSON không phải object hoặc array.");
-    }
-
-    // Hỗ trợ path có index kiểu items[0].name
-    function getByPath(obj, path) {
-      if (!path) return undefined;
-      const parts = path
-        .replace(/\[(\d+)\]/g, ".$1") // [0] -> .0
-        .split(".")
-        .filter(Boolean);
-
+    function safeGet(obj, pathArr) {
       let cur = obj;
-      for (const p of parts) {
+      for (const k of pathArr) {
         if (cur == null) return undefined;
-        cur = cur[p];
+        cur = cur[k];
       }
       return cur;
     }
 
-    function normalizeValue(v) {
-      if (v == null) return "";
-      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
-      try { return JSON.stringify(v); } catch { return String(v); }
+    function toJobs(json) {
+      // File của bạn top-level là array chứa job objects.
+      // Nhưng để robust: nếu là object -> bọc lại.
+      if (Array.isArray(json)) return json;
+      if (isObject(json)) return [json];
+      return [];
     }
 
-    function projectRow(row, fileName) {
-      const out = {};
-      if (ADD_FILENAME_COLUMN) out["_file"] = fileName;
+    function formatMbps(bps) {
+      if (bps == null || bps === "") return "";
+      const mbps = Number(bps) / 1_000_000;
+      // Giữ 1 chữ số thập phân giống bảng bạn
+      return Math.round(mbps * 10) / 10;
+    }
 
-      for (const c of COLUMNS_WANTED) {
-        out[c.title] = normalizeValue(getByPath(row, c.path));
+    function pickGroupLogo(variant) {
+      const logos = variant?.LogoInsertions || [];
+      const enabled = logos.filter(l => l && l.Enable && l.FileName);
+
+      if (!enabled.length) return "";
+
+      // Ưu tiên "logo nhóm" (khác Fplay_TT_EPL.png)
+      for (const l of enabled) {
+        if (l.FileName !== "Fplay_TT_EPL.png") return l.FileName;
       }
-      return out;
+      return enabled[0].FileName;
+    }
+
+    function joinOutputUrls(outputGroup) {
+      const outs = outputGroup?.Outputs || [];
+      const urls = outs
+        .filter(o => o && (o.EnableOutput === undefined || o.EnableOutput === true) && o.Url)
+        .map(o => o.Url);
+      return urls.join(" | ");
+    }
+
+    function buildRowsFromJob(job, fileName) {
+      const rows = [];
+
+      const template = job?.Device?.Template;
+      const profiles = safeGet(template, ["FormatConfigurations", 0, "TSMuxer", "Profiles"]) || [];
+      const variants = safeGet(template, ["Tracks", "VideoTracks", 0, "Variants"]) || [];
+      const outputGroups = safeGet(job, ["Outputs", 0]) || []; // list length = number of profiles
+
+      const jobName = job?.Name ?? "";
+      const tmplName = template?.Name ?? "";
+
+      for (let i = 0; i < profiles.length; i++) {
+        // Profile i -> VariantIdx (thường i, nhưng mình đọc đúng field)
+        const variantIdx =
+          safeGet(profiles[i], ["TracksMapping", "VideoTrackList", 0, "VariantIdx"]) ?? i;
+
+        const v = variants[variantIdx] || {};
+        const bitrate = safeGet(v, ["Encoding", "Bitrate"]);
+        const fps = safeGet(v, ["FrameRateParameters", "FrameRate"]);
+        const w = safeGet(v, ["FrameSizeParameters", "Width"]);
+        const h = safeGet(v, ["FrameSizeParameters", "Height"]);
+        const baseRes = safeGet(v, ["FrameSizeParameters", "Resolution"]);
+        const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
+        const groupLogo = pickGroupLogo(v);
+
+        const outGroup = outputGroups[i] || {};
+        const outUrls = joinOutputUrls(outGroup);
+
+        rows.push({
+          file: fileName,
+          job_name: jobName,
+          template_name: tmplName,
+          profile: i,
+          bitrate_mbps: formatMbps(bitrate),
+          fps: fps !== undefined ? Number(fps) : "",
+          size_px: (w && h) ? `${w}x${h}` : "",
+          baseRes: baseRes ?? "",
+          gop: gop ?? "",
+          logo_group: groupLogo,
+          output_urls: outUrls,
+        });
+      }
+
+      return rows;
     }
 
     function buildColumns() {
-      const cols = [];
-      if (ADD_FILENAME_COLUMN) cols.push({ title: "file", field: "_file", headerFilter: "input" });
+      return [
+        { title: "file", field: "file", headerFilter: "input" },
+        { title: "job_name", field: "job_name", headerFilter: "input" },
+        { title: "template_name", field: "template_name", headerFilter: "input" },
 
-      for (const c of COLUMNS_WANTED) {
-        cols.push({ title: c.title, field: c.title, headerFilter: "input" });
-      }
-      return cols;
-    }
-
-    function showKeysPreview(firstRow, fileName) {
-      if (!firstRow || typeof firstRow !== "object") {
-        keysBox.textContent = "Không tìm thấy object hợp lệ để hiển thị keys.";
-        return;
-      }
-
-      const topKeys = Object.keys(firstRow);
-      keysBox.textContent =
-        `Keys phát hiện (dòng đầu tiên của file: ${fileName})\n` +
-        topKeys.join(", ") +
-        `\n\nGợi ý:\n- Nếu bạn cần key lồng nhau, hãy viết path kiểu A.B.C\n- Nếu là mảng, dùng [0], [1]...\nVí dụ: Device.Template.Tracks.AudioTracks[0].Language`;
+        { title: "Profile", field: "profile", headerFilter: "input" },
+        { title: "Bitrate (Mbps)", field: "bitrate_mbps", headerFilter: "input" },
+        { title: "FPS", field: "fps", headerFilter: "input" },
+        { title: "Size (px)", field: "size_px", headerFilter: "input" },
+        { title: "BaseRes", field: "baseRes", headerFilter: "input" },
+        { title: "GOP", field: "gop", headerFilter: "input" },
+        { title: "Logo “nhóm”", field: "logo_group", headerFilter: "input" },
+        { title: "Output URL(s)", field: "output_urls", headerFilter: "input" },
+      ];
     }
 
     async function readAllFiles(files) {
-      const all = [];
-      keysBox.textContent = "Đang đọc file...";
+      const allRows = [];
+      const dbg = [];
 
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        const text = await f.text();
-        const json = JSON.parse(text);
+      for (const f of files) {
+        try {
+          const text = await f.text();
+          const json = JSON.parse(text);
 
-        const rows = toRows(json);
+          const jobs = toJobs(json);
+          if (!jobs.length) {
+            dbg.push(`- ${f.name}: Không đọc được jobs (JSON không phải array/object).`);
+            continue;
+          }
 
-        // Preview keys: lấy row đầu tiên của file đầu tiên
-        if (i === 0 && rows.length > 0) {
-          showKeysPreview(rows[0], f.name);
-        }
-
-        for (const r of rows) {
-          all.push(projectRow(r, f.name));
+          for (const job of jobs) {
+            const rows = buildRowsFromJob(job, f.name);
+            if (!rows.length) {
+              dbg.push(`- ${f.name}: Không thấy Profiles hoặc Variants theo cấu trúc mong đợi.`);
+            }
+            allRows.push(...rows);
+          }
+        } catch (e) {
+          dbg.push(`- ${f.name}: Lỗi parse JSON: ${e?.message || e}`);
         }
       }
-      return all;
+
+      debugEl.textContent =
+        dbg.length
+          ? "Debug:\n" + dbg.join("\n")
+          : "Debug: OK (không phát hiện lỗi cấu trúc khi đọc file).";
+
+      return allRows;
     }
 
-    function setUiState({ loading, rowsCount }) {
-      if (loading) {
-        statEl.textContent = "loading...";
-        downloadBtn.disabled = true;
-        clearBtn.disabled = true;
-        return;
-      }
-      statEl.textContent = `${rowsCount} rows`;
-      downloadBtn.disabled = rowsCount === 0;
-      clearBtn.disabled = rowsCount === 0;
+    function setUi(rowsCount, loading=false) {
+      statEl.textContent = loading ? "loading..." : `${rowsCount} rows`;
+      downloadBtn.disabled = loading || rowsCount === 0;
+      clearBtn.disabled = loading || rowsCount === 0;
     }
 
     fileInput.addEventListener("change", async (e) => {
@@ -220,7 +220,7 @@
       if (!files.length) return;
 
       try {
-        setUiState({ loading: true, rowsCount: 0 });
+        setUi(0, true);
 
         const data = await readAllFiles(files);
         const columns = buildColumns();
@@ -232,33 +232,30 @@
           columns,
           layout: "fitDataStretch",
           pagination: true,
-          paginationSize: PAGE_SIZE,
+          paginationSize: 30,
           movableColumns: true,
           height: "70vh",
         });
 
-        setUiState({ loading: false, rowsCount: data.length });
-
+        setUi(data.length, false);
       } catch (err) {
-        alert("Lỗi đọc JSON: " + (err?.message || err));
-        keysBox.textContent = "Lỗi: không đọc được JSON hoặc JSON không đúng định dạng.";
+        alert("Lỗi: " + (err?.message || err));
+        debugEl.textContent = "Debug: Có lỗi khi xử lý file.";
         if (table) { table.destroy(); table = null; }
-        setUiState({ loading: false, rowsCount: 0 });
+        setUi(0, false);
       }
     });
 
     downloadBtn.addEventListener("click", () => {
       if (!table) return;
-      table.download("csv", "extracted.csv");
+      table.download("csv", "profiles_audit.csv");
     });
 
     clearBtn.addEventListener("click", () => {
       if (table) { table.destroy(); table = null; }
-      keysBox.textContent = "Keys phát hiện sẽ hiện ở đây sau khi bạn upload (để bạn biết key thật trong JSON và map path cho đúng).";
-      statEl.textContent = "0 rows";
-      downloadBtn.disabled = true;
-      clearBtn.disabled = true;
       fileInput.value = "";
+      debugEl.textContent = "Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).";
+      setUi(0, false);
     });
   </script>
 </body>
