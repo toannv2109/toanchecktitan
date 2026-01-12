@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>JSON Profiles Audit → BaseRes + Quality + Logos + Output</title>
+  <title>JSON Profiles Audit → BaseRes + Codec + FrameType + Quality + Logos + Output</title>
 
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
@@ -31,7 +31,7 @@
   </style>
 </head>
 <body>
-  <h2>Upload JSON → Audit Profile (BaseRes/Quality/Logo position/Output)</h2>
+  <h2>Upload JSON → Audit Profile (BaseRes/Codec/FrameType/Quality/Logo position/Output)</h2>
 
   <div class="row">
     <input id="file" type="file" accept=".json,application/json" multiple />
@@ -41,7 +41,11 @@
   </div>
 
   <div class="note">
-    toannv
+    - Nếu <b>BaseRes = Custom</b> thì <b>BaseRes</b> sẽ tự lấy giá trị từ Size(px) (Width x Height).<br/>
+    - Cột <b>Size (px)</b> đã bị ẩn theo yêu cầu.<br/>
+    - Thêm cột <b>Codec</b> = <code>Encoding.Codec</code>, <b>Frame type</b> = <code>Encoding.FrameType</code>.<br/>
+    - Thêm cột <b>Quality/CPUtunning</b> lấy từ <code>VideoQuality.PremiumVideoQuality</code>.<br/>
+    - Logo hiển thị dạng: <code>file.png (Top,Left,Size)</code>
   </div>
 
   <pre id="debug">Debug sẽ hiện ở đây (nếu file thiếu key hoặc cấu trúc khác).</pre>
@@ -111,7 +115,7 @@
     }
 
     function logoPosText(x) {
-      // Bạn yêu cầu: (Top,Left,Size)
+      // (Top,Left,Size)
       return `${x.file} (${x.top},${x.left},${x.size})`;
     }
 
@@ -171,9 +175,14 @@
         const w = safeGet(v, ["FrameSizeParameters", "Width"]);
         const h = safeGet(v, ["FrameSizeParameters", "Height"]);
         const baseRes = safeGet(v, ["FrameSizeParameters", "Resolution"]);
+
+        // NEW: Codec + Frame type (theo đoạn bạn đưa)
+        const codec = safeGet(v, ["Encoding", "Codec"]) ?? "";
+        const frameType = safeGet(v, ["Encoding", "FrameType"]) ?? "";
+
         const gop = safeGet(v, ["Encoding", "GopParameters", "GopSize"]);
 
-        // NEW: Quality/CPUtunning
+        // Quality/CPUtunning
         const qualityCpu = safeGet(v, ["VideoQuality", "PremiumVideoQuality"]) ?? "";
 
         // Size(px) dùng để thay thế BaseRes khi BaseRes = Custom (nhưng không hiển thị cột Size)
@@ -181,7 +190,7 @@
 
         let baseResVal = baseRes ?? "";
         if (String(baseResVal).toLowerCase() === "custom") {
-          baseResVal = sizePx; // yêu cầu: custom thì lấy sizePx
+          baseResVal = sizePx;
         }
 
         const variantLogos = v?.LogoInsertions || [];
@@ -204,7 +213,10 @@
           fps: fps !== undefined ? Number(fps) : "",
 
           baseRes: baseResVal,
-          quality_cpu: qualityCpu, // NEW column here
+          codec: codec,
+          frame_type: frameType,
+          quality_cpu: qualityCpu,
+
           gop: gop ?? "",
 
           enabled_logos_variant: logos.variantTexts.join(" | "),
@@ -228,7 +240,10 @@
         { title: "FPS", field: "fps", headerFilter: "input" },
 
         { title: "BaseRes", field: "baseRes", headerFilter: "input" },
-        { title: "Quality/CPUtunning", field: "quality_cpu", headerFilter: "input" },  <!-- NEW -->
+        { title: "Codec", field: "codec", headerFilter: "input" },
+        { title: "Frame type", field: "frame_type", headerFilter: "input" },
+        { title: "Quality/CPUtunning", field: "quality_cpu", headerFilter: "input" },
+
         { title: "GOP", field: "gop", headerFilter: "input" },
 
         { title: "Enabled Logos (Variant)", field: "enabled_logos_variant", headerFilter: "input" },
